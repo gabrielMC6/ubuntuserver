@@ -16,8 +16,8 @@ Este projeto é um script simples para monitorar o status do Nginx em um servido
 
 1. **Clonar o repositório:**
    ```bash
-   git clone https://github.com/seu-usuario/seu-repositorio.git
-   cd seu-repositorio
+   git clone https://github.com/gabrielMC6/ubuntuserver/
+   cd ubuntuserver
    ```
 
 2. **Instalar dependências:**
@@ -31,7 +31,7 @@ Este projeto é um script simples para monitorar o status do Nginx em um servido
 
 3. **Configurar o Webhook do Discord:**
    - Crie um webhook no seu canal do Discord (Configurações do canal > Integrações > Webhooks > Criar Webhook).
-   - Copie o **URL do Webhook**.
+   - Copie o (https://discord.com/api/webhooks/1405357430891614269/qcC1d2M99UHCpPTdyg2Xy3W0XwnhfcVe1qakPpNAbOX6Vd49IKrMVC_Yl-SKfu7vz_Gj).
 
 4. **Configurar o arquivo `.env`:**
    - Crie o arquivo `/etc/estudio-monitor.env` e adicione a URL do webhook:
