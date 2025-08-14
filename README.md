@@ -1,83 +1,158 @@
-# Monitoramento do Nginx com Alerta no Discord
+# Projeto: Monitoramento de Nginx com Alerta no Discord
 
-Este projeto é um script simples para monitorar o status do Nginx em um servidor Ubuntu. Caso o Nginx caia, o script envia um alerta para um canal no Discord e tenta reiniciar automaticamente o serviço.
+## 1 Instalação da VM e pacotes necessários
+No Ubuntu Server (ou VM equivalente), atualize os pacotes e instale o Nginx e o Python:
 
-## Funcionalidades
-- **Monitoramento do Nginx:** Verifica se o Nginx está ativo.
-- **Alerta no Discord:** Envia uma mensagem de alerta caso o Nginx caia.
-- **Reinício automático:** Caso o Nginx esteja inativo, o script tenta reiniciar o serviço.
+```bash
+sudo apt update && sudo apt -y install nginx python3 python3-venv python3-pip curl
+```
 
-## Requisitos
-- Ubuntu Server
-- Nginx instalado e configurado
-- Acesso ao Discord (para criar um webhook)
+---
 
-## Como Configurar
+## 2  Configuração de diretórios e HTML
+Crie o diretório do site e adicione a página HTML:
 
-1. **Clonar o repositório:**
-   ```bash
-   git clone https://github.com/gabrielMC6/ubuntuserver/
-   cd ubuntuserver
-   ```
+```bash
+sudo mkdir -p /var/www/estudio-site
+sudo nano /var/www/estudio-site/index.html
+```
+*(Adicione o conteúdo HTML desejado e salve.)*
 
-2. **Instalar dependências:**
-   Certifique-se de que o Python 3 esteja instalado no seu servidor.
+No arquivo de configuração do Nginx (`/etc/nginx/sites-available/default`), defina:
+```
+server_name _;
+root /var/www/estudio-site;
+index index.html;
+```
 
-   Instale as dependências necessárias com:
-   ```bash
-   sudo apt update
-   sudo apt install python3 python3-pip
-   ```
+Reinicie o Nginx:
+```bash
+sudo systemctl restart nginx
+```
 
-3. **Configurar o Webhook do Discord:**
-   - Crie um webhook no seu canal do Discord (Configurações do canal > Integrações > Webhooks > Criar Webhook).
-   - Copie o URL do Webhook.
+---
 
-4. **Configurar o arquivo `.env`:**
-   - Crie o arquivo `/etc/estudio-monitor.env` e adicione a URL do webhook:
-     ```bash
-     sudo nano /etc/estudio-monitor.env
-     ```
-   - Adicione as variáveis de configuração:
-     ```env
-     MON_URL="http://127.0.0.1/healthz"
-     MON_TIMEOUT=5
-     MON_RETRIES=3
-     DISCORD_WEBHOOK_URL="COLE_AQUI_O_SEU_WEBHOOK"
-     ```
+## 3 Arquivo de variáveis de ambiente (.env)
+Crie o arquivo `/etc/estudio-monitor.env`:
 
-5. **Configurar o script de monitoramento:**
-   - O script principal está em `/opt/estudio-nginx/monitor_nginx.py`.
-   - Certifique-se de que o script tenha permissão de execução:
-     ```bash
-     sudo chmod +x /opt/estudio-nginx/monitor_nginx.py
-     ```
+```bash
+sudo tee /etc/estudio-monitor.env >/dev/null <<'EOF'
+MON_URL="http://127.0.0.1/healthz"
+MON_TIMEOUT=5
+MON_RETRIES=3
+DISCORD_WEBHOOK_URL="COLE_AQUI_SEU_WEBHOOK"
+EOF
+sudo chmod 600 /etc/estudio-monitor.env
+```
 
-6. **Ativar o Timer:**
-   - Habilite o timer para executar o monitoramento periodicamente:
-     ```bash
-     sudo systemctl enable --now estudio-monitor.timer
-     ```
+---
 
-7. **Verificar o status do Nginx:**
-   - O script automaticamente verifica o status do Nginx a cada minuto e envia alertas no Discord caso o serviço esteja inativo.
-   - Para testar, basta parar o Nginx:
-     ```bash
-     sudo systemctl stop nginx
-     ```
+## 4 Script Python de monitoramento
+Salve o script em `/opt/estudio-nginx/monitor_nginx.py`:
 
-## Como Funciona
-- O script verifica se o Nginx está ativo. Se ele não estiver, o script envia um alerta no Discord e tenta reiniciar o serviço.
-- O Nginx é monitorado periodicamente pelo timer do systemd.
+```python
+#!/usr/bin/env python3
+import os, time, subprocess, json
+from urllib.request import urlopen, Request
 
-## Logs
-- Os logs do script podem ser visualizados com o comando:
-  ```bash
-  journalctl -u estudio-monitor.service -f
-  ```
+MON_URL = os.getenv("MON_URL", "http://127.0.0.1/healthz")
+TIMEOUT = int(os.getenv("MON_TIMEOUT", "5"))
+RETRIES = int(os.getenv("MON_RETRIES", "3"))
+DISCORD_WEBHOOK_URL = os.getenv("DISCORD_WEBHOOK_URL", "")
 
-## Contribuições
-Sinta-se à vontade para contribuir com melhorias ou correções. Para isso, faça um fork deste repositório, adicione suas mudanças e envie um pull request.
+def http_ok(url, timeout, retries):
+    for _ in range(retries):
+        try:
+            req = Request(url, headers={"User-Agent": "estudio-monitor"})
+            with urlopen(req, timeout=timeout) as r:
+                if r.getcode() == 200:
+                    return True
+        except Exception:
+            time.sleep(1)
+    return False
 
-## Licença
-Este projeto está licenciado sob a MIT License - veja o arquivo [LICENSE](LICENSE) para mais detalhes.
+def is_active(service="nginx"):
+    return subprocess.run(["systemctl","is-active","--quiet",service]).returncode == 0
+
+def restart(service="nginx"):
+    subprocess.run(["systemctl","restart",service], check=False)
+
+def alert_discord(text):
+    if not DISCORD_WEBHOOK_URL:
+        print("discord: webhook vazio")
+        return
+    try:
+        url = DISCORD_WEBHOOK_URL if "?" in DISCORD_WEBHOOK_URL else DISCORD_WEBHOOK_URL + "?wait=true"
+        data = json.dumps({"content": text}).encode()
+        req = Request(url, data=data, headers={"Content-Type":"application/json"})
+        with urlopen(req, timeout=10) as r:
+            print(f"discord status: {r.status}")
+    except Exception as e:
+        print(f"discord erro: {e}")
+
+if not http_ok(MON_URL, TIMEOUT, RETRIES) or not is_active("nginx"):
+    alert_discord("⚠️ Nginx caiu! Tentando reiniciar...")
+    restart("nginx")
+```
+
+Dê permissão de execução:
+```bash
+sudo chmod +x /opt/estudio-nginx/monitor_nginx.py
+```
+
+---
+
+## 5 Service e Timer do Systemd
+Crie `/etc/systemd/system/estudio-monitor.service`:
+```
+[Unit]
+Description=Monitor simples do Nginx (checa /healthz, alerta Discord e tenta restart)
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+EnvironmentFile=/etc/estudio-monitor.env
+ExecStart=/usr/bin/python3 /opt/estudio-nginx/monitor_nginx.py
+
+[Install]
+WantedBy=multi-user.target
+```
+
+Crie `/etc/systemd/system/estudio-monitor.timer`:
+```
+[Unit]
+Description=Executa o monitor do Nginx a cada 1 minuto
+
+[Timer]
+OnBootSec=30
+OnUnitActiveSec=60
+
+[Install]
+WantedBy=timers.target
+```
+
+A```
+
+---
+
+## 6 Teste - Pare o Nginx:
+```bash
+sudo systemctl stop nginx
+```
+- Aguarde o timer rodar e verificar se:
+  - O serviço é reiniciado.
+  - Uma mensagem chega no Discord via webhook.
+
+---
+
+## 📂 Estrutura do projeto
+```
+/var/www/estudio-site/index.html        # Página HTML
+/opt/estudio-nginx/monitor_nginx.py     # Script Python
+/etc/estudio-monitor.env                # Variáveis de ambiente
+/etc/systemd/system/estudio-monitor.*   # Service e Timer
+```
+
+---
+
